@@ -1,0 +1,34 @@
+name = "kanban"
+main = "src/index.ts"
+compatibility_date = "2024-05-01"
+compatibility_flags = ["nodejs_compat"]
+account_id = "9618ac240963cd8cf9fe3c11f753c009"
+
+# Custom domain
+routes = [
+  { pattern = "tasks.sculptorai.org", custom_domain = true }
+]
+
+# D1 Database
+[[d1_databases]]
+binding = "DB"
+database_name = "kanban-db"
+database_id = "95300b99-3279-4d54-b48a-f3e2c41e930e"
+
+# R2 Bucket for profile pictures
+[[r2_buckets]]
+binding = "STORAGE"
+bucket_name = "kanban-storage"
+
+# Durable Objects for real-time collaboration
+[[durable_objects.bindings]]
+name = "BOARD_ROOM"
+class_name = "BoardRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["BoardRoom"]
+
+# Environment variables (secrets set via wrangler secret)
+[vars]
+ENVIRONMENT = "production"
