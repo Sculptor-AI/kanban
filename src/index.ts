@@ -863,7 +863,7 @@ function getIndexHtml(): string {
 
       return \`
         <div class="card" draggable="true" data-card-id="\${card.id}" onclick="showCardDetail('\${card.id}')">
-          \${labels.length ? '<div class="card-labels">' + labels.map(l => '<div class="card-label" style="background:\${l.color}">\${escapeHtml(l.name)}</div>').join('') + '</div>' : ''}
+          \${labels.length ? '<div class="card-labels">' + labels.map(l => '<div class="card-label" style="background:'+l.color+'">'+escapeHtml(l.name)+'</div>').join('') + '</div>' : ''}
           <div class="card-title">\${escapeHtml(card.title)}</div>
           \${githubLinks.length || assignees.length ? \`
             <div class="card-meta">
