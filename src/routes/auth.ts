@@ -64,11 +64,12 @@ auth.post('/register', async (c) => {
     `).bind(userId, username.trim().toLowerCase(), passwordHash, (displayName || username).trim()).run();
 
     // Mark invite key as used (skip if unlimited)
-    if (!validKey.id.startsWith('unlimited-')) {
+    const keyId = validKey.id as string;
+    if (!keyId.startsWith('unlimited-')) {
       await c.env.DB.prepare(`
         UPDATE invite_keys SET used_at = unixepoch(), used_by = ?
         WHERE id = ?
-      `).bind(userId, validKey.id).run();
+      `).bind(userId, keyId).run();
     }
 
     // Create session
