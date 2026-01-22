@@ -4,6 +4,7 @@ import { Hono } from 'hono';
 import { generateId } from '../utils/crypto';
 import { validateLabelName, validateColor, normalizeColor } from '../utils/validation';
 import { requireAuth, checkBoardAccess } from '../middleware/auth';
+import { broadcastToBoard } from '../utils/broadcast';
 import type { AppContext, Label } from '../types';
 
 const labels = new Hono<AppContext>();
@@ -66,16 +67,24 @@ labels.post('/', async (c) => {
       VALUES (?, ?, ?, ?, ?)
     `).bind(labelId, boardId, name.trim(), normalizedColor, now).run();
 
+    const newLabel = {
+      id: labelId,
+      board_id: boardId,
+      name: name.trim(),
+      color: normalizedColor,
+      created_at: now
+    };
+
+    // Broadcast update
+    await broadcastToBoard(c.env, boardId, {
+      type: 'label_created',
+      payload: newLabel
+    });
+
     return c.json({
       success: true,
       data: {
-        label: {
-          id: labelId,
-          board_id: boardId,
-          name: name.trim(),
-          color: normalizedColor,
-          created_at: now
-        }
+        label: newLabel
       }
     }, 201);
   } catch (error) {
@@ -137,6 +146,12 @@ labels.patch('/:labelId', async (c) => {
       UPDATE labels SET ${updates.join(', ')} WHERE id = ?
     `).bind(...values).run();
 
+    // Broadcast update
+    await broadcastToBoard(c.env, label.board_id, {
+      type: 'label_updated',
+      payload: { id: labelId }
+    });
+
     return c.json({ success: true });
   } catch (error) {
     console.error('Label update error:', error);
@@ -163,6 +178,12 @@ labels.delete('/:labelId', async (c) => {
   }
 
   await c.env.DB.prepare('DELETE FROM labels WHERE id = ?').bind(labelId).run();
+
+  // Broadcast update
+  await broadcastToBoard(c.env, label.board_id, {
+    type: 'label_deleted',
+    payload: { id: labelId }
+  });
 
   return c.json({ success: true });
 });

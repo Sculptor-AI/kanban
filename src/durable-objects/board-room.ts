@@ -87,7 +87,7 @@ export class BoardRoom {
       payload: {
         userId: session.user_id,
         username: session.display_name || session.username,
-        onlineCount: this.sessions.size
+        onlineCount: this.uniqueUserCount
       }
     }));
 
@@ -97,7 +97,7 @@ export class BoardRoom {
       payload: {
         userId: session.user_id,
         username: session.display_name || session.username,
-        onlineCount: this.sessions.size
+        onlineCount: this.uniqueUserCount
       }
     }, server);
 
@@ -159,10 +159,18 @@ export class BoardRoom {
         payload: {
           userId: session.userId,
           username: session.username,
-          onlineCount: this.sessions.size
+          onlineCount: this.uniqueUserCount
         }
       });
     }
+  }
+
+  private get uniqueUserCount(): number {
+    const uniqueUsers = new Set<string>();
+    for (const session of this.sessions.values()) {
+      uniqueUsers.add(session.userId);
+    }
+    return uniqueUsers.size;
   }
 
   async webSocketError(ws: WebSocket, error: unknown): Promise<void> {

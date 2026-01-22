@@ -4,6 +4,7 @@ import { Hono } from 'hono';
 import { generateId } from '../utils/crypto';
 import { validateCardTitle, parseGitHubUrl } from '../utils/validation';
 import { requireAuth, checkBoardAccess } from '../middleware/auth';
+import { broadcastToBoard } from '../utils/broadcast';
 import type { AppContext, Card, List } from '../types';
 
 const cards = new Hono<AppContext>();
@@ -72,19 +73,27 @@ cards.post('/', async (c) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(cardId, listId, title.trim(), description?.trim() || null, cardPosition, user.id, now, now).run();
 
+    const newCard = {
+      id: cardId,
+      list_id: listId,
+      title: title.trim(),
+      description: description?.trim() || null,
+      position: cardPosition,
+      created_by: user.id,
+      created_at: now,
+      updated_at: now
+    };
+
+    // Broadcast update
+    await broadcastToBoard(c.env, boardId, {
+      type: 'card_created',
+      payload: newCard
+    });
+
     return c.json({
       success: true,
       data: {
-        card: {
-          id: cardId,
-          list_id: listId,
-          title: title.trim(),
-          description: description?.trim() || null,
-          position: cardPosition,
-          created_by: user.id,
-          created_at: now,
-          updated_at: now
-        }
+        card: newCard
       }
     }, 201);
   } catch (error) {
@@ -190,6 +199,12 @@ cards.patch('/:cardId', async (c) => {
       UPDATE cards SET ${updates.join(', ')} WHERE id = ?
     `).bind(...values).run();
 
+    // Broadcast update
+    await broadcastToBoard(c.env, boardId, {
+      type: 'card_updated',
+      payload: { id: cardId }
+    });
+
     return c.json({ success: true });
   } catch (error) {
     console.error('Card update error:', error);
@@ -237,6 +252,12 @@ cards.post('/:cardId/move', async (c) => {
       WHERE id = ?
     `).bind(listId, position, cardId).run();
 
+    // Broadcast update
+    await broadcastToBoard(c.env, currentBoardId, {
+      type: 'card_moved',
+      payload: { cardId, listId, position }
+    });
+
     return c.json({ success: true });
   } catch (error) {
     console.error('Card move error:', error);
@@ -260,6 +281,12 @@ cards.delete('/:cardId', async (c) => {
   }
 
   await c.env.DB.prepare('DELETE FROM cards WHERE id = ?').bind(cardId).run();
+
+  // Broadcast update
+  await broadcastToBoard(c.env, boardId, {
+    type: 'card_deleted',
+    payload: { id: cardId }
+  });
 
   return c.json({ success: true });
 });
@@ -298,6 +325,12 @@ cards.post('/:cardId/assignees', async (c) => {
       VALUES (?, ?, unixepoch(), ?)
     `).bind(cardId, userId, user.id).run();
 
+    // Broadcast update
+    await broadcastToBoard(c.env, boardId, {
+      type: 'card_assignee_changed',
+      payload: { cardId, userId, add: true }
+    });
+
     return c.json({ success: true }, 201);
   } catch (error) {
     console.error('Assign user error:', error);
@@ -324,6 +357,12 @@ cards.delete('/:cardId/assignees/:userId', async (c) => {
   await c.env.DB.prepare(
     'DELETE FROM card_assignees WHERE card_id = ? AND user_id = ?'
   ).bind(cardId, targetUserId).run();
+
+  // Broadcast update
+  await broadcastToBoard(c.env, boardId, {
+    type: 'card_assignee_changed',
+    payload: { cardId, userId: targetUserId, add: false }
+  });
 
   return c.json({ success: true });
 });
@@ -365,6 +404,12 @@ cards.post('/:cardId/labels', async (c) => {
       VALUES (?, ?, unixepoch())
     `).bind(cardId, labelId).run();
 
+    // Broadcast update
+    await broadcastToBoard(c.env, boardId, {
+      type: 'card_label_changed',
+      payload: { cardId, labelId, add: true }
+    });
+
     return c.json({ success: true }, 201);
   } catch (error) {
     console.error('Add label error:', error);
@@ -391,6 +436,12 @@ cards.delete('/:cardId/labels/:labelId', async (c) => {
   await c.env.DB.prepare(
     'DELETE FROM card_labels WHERE card_id = ? AND label_id = ?'
   ).bind(cardId, labelId).run();
+
+  // Broadcast update
+  await broadcastToBoard(c.env, boardId, {
+    type: 'card_label_changed',
+    payload: { cardId, labelId, add: false }
+  });
 
   return c.json({ success: true });
 });
@@ -434,6 +485,12 @@ cards.post('/:cardId/github', async (c) => {
         updated_at = excluded.updated_at
     `).bind(linkId, cardId, parsed.type, parsed.owner, parsed.repo, parsed.number, url, now, now).run();
 
+    // Broadcast update
+    await broadcastToBoard(c.env, boardId, {
+      type: 'card_updated',
+      payload: { id: cardId }
+    });
+
     return c.json({ success: true }, 201);
   } catch (error) {
     console.error('Add GitHub link error:', error);
@@ -460,6 +517,12 @@ cards.delete('/:cardId/github/:linkId', async (c) => {
   await c.env.DB.prepare(
     'DELETE FROM card_github_links WHERE id = ? AND card_id = ?'
   ).bind(linkId, cardId).run();
+
+  // Broadcast update
+  await broadcastToBoard(c.env, boardId, {
+    type: 'card_updated',
+    payload: { id: cardId }
+  });
 
   return c.json({ success: true });
 });

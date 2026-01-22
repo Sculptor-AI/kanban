@@ -4,6 +4,7 @@ import { Hono } from 'hono';
 import { generateId } from '../utils/crypto';
 import { validateListName } from '../utils/validation';
 import { requireAuth, checkBoardAccess } from '../middleware/auth';
+import { broadcastToBoard } from '../utils/broadcast';
 import type { AppContext, List } from '../types';
 
 const lists = new Hono<AppContext>();
@@ -49,17 +50,25 @@ lists.post('/', async (c) => {
       VALUES (?, ?, ?, ?, ?, ?)
     `).bind(listId, boardId, name.trim(), listPosition, now, now).run();
 
+    const newList = {
+      id: listId,
+      board_id: boardId,
+      name: name.trim(),
+      position: listPosition,
+      created_at: now,
+      updated_at: now
+    };
+
+    // Broadcast update
+    await broadcastToBoard(c.env, boardId, {
+      type: 'list_created',
+      payload: newList
+    });
+
     return c.json({
       success: true,
       data: {
-        list: {
-          id: listId,
-          board_id: boardId,
-          name: name.trim(),
-          position: listPosition,
-          created_at: now,
-          updated_at: now
-        }
+        list: newList
       }
     }, 201);
   } catch (error) {
@@ -101,6 +110,12 @@ lists.patch('/:listId', async (c) => {
         UPDATE lists SET name = ?, updated_at = unixepoch()
         WHERE id = ?
       `).bind(name.trim(), listId).run();
+
+      // Broadcast update
+      await broadcastToBoard(c.env, list.board_id, {
+        type: 'list_updated',
+        payload: { id: listId, name: name.trim() }
+      });
     }
 
     return c.json({ success: true });
@@ -136,6 +151,12 @@ lists.post('/reorder', async (c) => {
 
     await c.env.DB.batch(statements);
 
+    // Broadcast update
+    await broadcastToBoard(c.env, boardId, {
+      type: 'lists_reordered',
+      payload: { listIds }
+    });
+
     return c.json({ success: true });
   } catch (error) {
     console.error('List reorder error:', error);
@@ -163,6 +184,12 @@ lists.delete('/:listId', async (c) => {
     }
 
     await c.env.DB.prepare('DELETE FROM lists WHERE id = ?').bind(listId).run();
+
+    // Broadcast update
+    await broadcastToBoard(c.env, list.board_id, {
+      type: 'list_deleted',
+      payload: { id: listId }
+    });
 
     return c.json({ success: true });
   } catch (error) {

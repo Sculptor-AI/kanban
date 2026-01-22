@@ -4,6 +4,7 @@ import { Hono } from 'hono';
 import { generateId } from '../utils/crypto';
 import { validateBoardName } from '../utils/validation';
 import { requireAuth, checkBoardAccess, checkBoardAdmin, checkBoardOwner } from '../middleware/auth';
+import { broadcastToBoard } from '../utils/broadcast';
 import type { AppContext, Board, BoardMember, User } from '../types';
 
 const boards = new Hono<AppContext>();
@@ -221,6 +222,12 @@ boards.patch('/:boardId', async (c) => {
       UPDATE boards SET ${updates.join(', ')} WHERE id = ?
     `).bind(...values).run();
 
+    // Broadcast update
+    await broadcastToBoard(c.env, boardId, {
+      type: 'board_updated',
+      payload: { id: boardId, name: name?.trim(), description: description?.trim() }
+    });
+
     return c.json({ success: true });
   } catch (error) {
     console.error('Board update error:', error);
@@ -312,6 +319,12 @@ boards.post('/:boardId/members', async (c) => {
       VALUES (?, ?, ?, unixepoch(), ?)
     `).bind(boardId, targetUser.id, role, user.id).run();
 
+    // Broadcast update
+    await broadcastToBoard(c.env, boardId, {
+      type: 'member_added',
+      payload: { userId: targetUser.id, role }
+    });
+
     return c.json({ success: true }, 201);
   } catch (error) {
     console.error('Add member error:', error);
@@ -348,6 +361,12 @@ boards.patch('/:boardId/members/:userId', async (c) => {
       WHERE board_id = ? AND user_id = ?
     `).bind(role, boardId, targetUserId).run();
 
+    // Broadcast update
+    await broadcastToBoard(c.env, boardId, {
+      type: 'member_updated',
+      payload: { userId: targetUserId, role }
+    });
+
     return c.json({ success: true });
   } catch (error) {
     console.error('Update member error:', error);
@@ -377,6 +396,12 @@ boards.delete('/:boardId/members/:userId', async (c) => {
   await c.env.DB.prepare(
     'DELETE FROM board_members WHERE board_id = ? AND user_id = ?'
   ).bind(boardId, targetUserId).run();
+
+  // Broadcast update
+  await broadcastToBoard(c.env, boardId, {
+    type: 'member_removed',
+    payload: { userId: targetUserId }
+  });
 
   return c.json({ success: true });
 });

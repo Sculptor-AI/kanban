@@ -408,9 +408,12 @@ function getIndexHtml(): string {
     .card.dragging { opacity: 0.5; }
     .card-labels { display: flex; gap: 0.25rem; margin-bottom: 0.25rem; flex-wrap: wrap; }
     .card-label {
-      height: 6px;
-      width: 32px;
-      border-radius: 3px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 500;
+      color: #fff;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.2);
     }
     .card-title { margin-bottom: 0.25rem; }
     .card-meta { display: flex; gap: 0.5rem; align-items: center; margin-top: 0.5rem; }
@@ -860,7 +863,7 @@ function getIndexHtml(): string {
 
       return \`
         <div class="card" draggable="true" data-card-id="\${card.id}" onclick="showCardDetail('\${card.id}')">
-          \${labels.length ? '<div class="card-labels">' + labels.map(l => '<div class="card-label" style="background:\${l.color}"></div>').join('') + '</div>' : ''}
+          \${labels.length ? '<div class="card-labels">' + labels.map(l => '<div class="card-label" style="background:\${l.color}">\${escapeHtml(l.name)}</div>').join('') + '</div>' : ''}
           <div class="card-title">\${escapeHtml(card.title)}</div>
           \${githubLinks.length || assignees.length ? \`
             <div class="card-meta">
@@ -1293,6 +1296,14 @@ function getIndexHtml(): string {
         case 'lists_reordered':
         case 'card_label_changed':
         case 'card_assignee_changed':
+        case 'list_updated':
+        case 'label_created':
+        case 'label_updated':
+        case 'label_deleted':
+        case 'board_updated':
+        case 'member_added':
+        case 'member_updated':
+        case 'member_removed':
           // Reload board to sync changes
           if (state.currentBoard) {
             loadBoard(state.currentBoard.id).then(() => {
