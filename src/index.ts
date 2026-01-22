@@ -35,9 +35,9 @@ app.use('*', secureHeaders({
   referrerPolicy: 'strict-origin-when-cross-origin'
 }));
 
-// CORS - only for same origin
+// CORS - restrict to same origin only
 app.use('/api/*', cors({
-  origin: (origin) => origin,
+  origin: 'https://tasks.sculptorai.org',
   credentials: true,
   allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization']
@@ -196,7 +196,7 @@ function getIndexHtml(): string {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Kanban</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📋</text></svg>">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%23333'><rect x='2' y='1' width='12' height='14' rx='1' fill='none' stroke='%23333' stroke-width='1.5'/><line x1='5' y1='5' x2='11' y2='5' stroke='%23333' stroke-width='1.5'/><line x1='5' y1='8' x2='11' y2='8' stroke='%23333' stroke-width='1.5'/><line x1='5' y1='11' x2='9' y2='11' stroke='%23333' stroke-width='1.5'/></svg>">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -864,7 +864,7 @@ function getIndexHtml(): string {
           <div class="card-title">\${escapeHtml(card.title)}</div>
           \${githubLinks.length || assignees.length ? \`
             <div class="card-meta">
-              \${githubLinks.length ? '<span style="font-size:0.75rem;color:var(--text-secondary)">🔗 \${githubLinks.length}</span>' : ''}
+              \${githubLinks.length ? '<span style="font-size:0.75rem;color:var(--text-secondary)">GH: \${githubLinks.length}</span>' : ''}
               \${assignees.length ? '<div class="card-assignees">' + assignees.slice(0,3).map(a => \`
                 <div class="avatar" title="\${escapeHtml(a.display_name || a.username)}">
                   \${a.avatar_url ? '<img src="'+a.avatar_url+'">' : (a.display_name || a.username).charAt(0).toUpperCase()}
@@ -1073,7 +1073,7 @@ function getIndexHtml(): string {
         <div style="position:absolute;background:var(--bg-secondary);border:1px solid var(--border);border-radius:4px;padding:0.5rem;z-index:10;box-shadow:0 2px 8px rgba(0,0,0,0.1)">
           \${state.currentBoard.labels.map(l => {
             const hasLabel = cardLabels.some(cl => cl.label_id === l.id);
-            return '<div style="display:flex;align-items:center;gap:0.5rem;padding:0.25rem;cursor:pointer" onclick="toggleLabel(\\''+cardId+'\\', \\''+l.id+'\\', '+!hasLabel+')"><span style="width:12px;height:12px;border-radius:2px;background:'+l.color+'"></span>'+escapeHtml(l.name)+(hasLabel?' ✓':'')+'</div>';
+            return '<div style="display:flex;align-items:center;gap:0.5rem;padding:0.25rem;cursor:pointer" onclick="toggleLabel(\\''+cardId+'\\', \\''+l.id+'\\', '+!hasLabel+')"><span style="width:12px;height:12px;border-radius:2px;background:'+l.color+'"></span>'+escapeHtml(l.name)+(hasLabel?' [x]':'')+'</div>';
           }).join('')}
           <button onclick="showCreateLabel('\${cardId}')" style="width:100%;margin-top:0.5rem;font-size:0.75rem">+ New Label</button>
         </div>
@@ -1099,7 +1099,7 @@ function getIndexHtml(): string {
         <div style="position:absolute;background:var(--bg-secondary);border:1px solid var(--border);border-radius:4px;padding:0.5rem;z-index:10;box-shadow:0 2px 8px rgba(0,0,0,0.1)">
           \${state.currentBoard.members.map(m => {
             const isAssigned = cardAssignees.some(ca => ca.user_id === m.user_id);
-            return '<div style="display:flex;align-items:center;gap:0.5rem;padding:0.25rem;cursor:pointer" onclick="toggleAssignee(\\''+cardId+'\\', \\''+m.user_id+'\\', '+!isAssigned+')"><span class="avatar" style="width:18px;height:18px">'+(m.display_name||m.username).charAt(0).toUpperCase()+'</span>'+escapeHtml(m.display_name||m.username)+(isAssigned?' ✓':'')+'</div>';
+            return '<div style="display:flex;align-items:center;gap:0.5rem;padding:0.25rem;cursor:pointer" onclick="toggleAssignee(\\''+cardId+'\\', \\''+m.user_id+'\\', '+!isAssigned+')"><span class="avatar" style="width:18px;height:18px">'+(m.display_name||m.username).charAt(0).toUpperCase()+'</span>'+escapeHtml(m.display_name||m.username)+(isAssigned?' [x]':'')+'</div>';
           }).join('')}
         </div>
       \`;

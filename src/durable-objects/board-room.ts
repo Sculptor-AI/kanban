@@ -81,6 +81,16 @@ export class BoardRoom {
       username: session.display_name || session.username
     });
 
+    // Send current online count to the new user
+    server.send(JSON.stringify({
+      type: 'user_joined',
+      payload: {
+        userId: session.user_id,
+        username: session.display_name || session.username,
+        onlineCount: this.sessions.size
+      }
+    }));
+
     // Notify others of new user
     this.broadcast({
       type: 'user_joined',
