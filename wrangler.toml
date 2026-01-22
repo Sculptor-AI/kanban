@@ -20,6 +20,11 @@ database_id = "95300b99-3279-4d54-b48a-f3e2c41e930e"
 binding = "STORAGE"
 bucket_name = "kanban-storage"
 
+# Migration to remove the Durable Object
+[[migrations]]
+tag = "v2"
+deleted_classes = ["BoardRoom"]
+
 # Environment variables (secrets set via wrangler secret)
 [vars]
 ENVIRONMENT = "production"
