@@ -465,10 +465,6 @@ function getIndexHtml(): string {
     }
     .member-info { display: flex; align-items: center; gap: 0.5rem; }
     .member-role { font-size: 0.75rem; color: var(--text-secondary); }
-
-    /* Online indicator */
-    .online-users { display: flex; align-items: center; gap: 0.25rem; font-size: 0.75rem; color: var(--text-secondary); }
-    .online-dot { width: 6px; height: 6px; background: var(--success); border-radius: 50%; }
   </style>
 </head>
 <body>
@@ -1197,10 +1193,13 @@ function getIndexHtml(): string {
         clearInterval(state.pollInterval);
       }
 
-      // Poll every 5 seconds
+      // Poll every 3 seconds (only when tab is visible)
       state.pollInterval = setInterval(async () => {
-        if (!location.pathname.startsWith('/board/')) {
-          clearInterval(state.pollInterval);
+        // Skip polling if tab is hidden or not on a board page
+        if (document.hidden || !location.pathname.startsWith('/board/')) {
+          if (!location.pathname.startsWith('/board/')) {
+            clearInterval(state.pollInterval);
+          }
           return;
         }
 
@@ -1241,7 +1240,7 @@ function getIndexHtml(): string {
         } catch (e) {
           console.error('Polling error:', e);
         }
-      }, 5000);
+      }, 3000);
     }
 
     function stopPolling() {
