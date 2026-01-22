@@ -12,9 +12,6 @@ import labelRoutes from './routes/labels';
 import uploadRoutes from './routes/upload';
 import type { AppContext, Env } from './types';
 
-// Re-export Durable Object
-export { BoardRoom } from './durable-objects/board-room';
-
 const app = new Hono<AppContext>();
 
 // Security headers
@@ -24,7 +21,7 @@ app.use('*', secureHeaders({
     scriptSrc: ["'self'", "'unsafe-inline'"],
     styleSrc: ["'self'", "'unsafe-inline'"],
     imgSrc: ["'self'", 'data:', 'blob:'],
-    connectSrc: ["'self'", 'wss:'],
+    connectSrc: ["'self'"],
     fontSrc: ["'self'"],
     objectSrc: ["'none'"],
     frameAncestors: ["'none'"],
@@ -53,52 +50,6 @@ app.route('/api/lists', listRoutes);
 app.route('/api/cards', cardRoutes);
 app.route('/api/labels', labelRoutes);
 app.route('/api/upload', uploadRoutes);
-
-// WebSocket endpoint for real-time collaboration
-app.get('/api/ws/:boardId', async (c) => {
-  const boardId = c.req.param('boardId');
-  const token = c.req.query('token');
-
-  if (!token) {
-    return c.json({ success: false, error: 'Token required' }, 400);
-  }
-
-  // Get or create Durable Object for this board
-  const id = c.env.BOARD_ROOM.idFromName(boardId);
-  const stub = c.env.BOARD_ROOM.get(id);
-
-  // Forward the WebSocket upgrade request
-  const url = new URL(c.req.url);
-  url.pathname = '/';
-  url.searchParams.set('token', token);
-  url.searchParams.set('boardId', boardId);
-
-  return stub.fetch(new Request(url.toString(), {
-    headers: c.req.raw.headers
-  }));
-});
-
-// Broadcast endpoint for API to notify WebSocket clients
-app.post('/api/boards/:boardId/broadcast', async (c) => {
-  const boardId = c.req.param('boardId');
-  const user = c.get('user');
-
-  if (!user) {
-    return c.json({ success: false, error: 'Authentication required' }, 401);
-  }
-
-  const body = await c.req.json();
-
-  const id = c.env.BOARD_ROOM.idFromName(boardId);
-  const stub = c.env.BOARD_ROOM.get(id);
-
-  await stub.fetch(new Request('https://internal/broadcast', {
-    method: 'POST',
-    body: JSON.stringify(body)
-  }));
-
-  return c.json({ success: true });
-});
 
 // Serve R2 storage files
 app.get('/storage/*', async (c) => {
@@ -531,9 +482,8 @@ function getIndexHtml(): string {
       boards: [],
       currentBoard: null,
       currentCard: null,
-      ws: null,
-      wsReconnectTimeout: null,
-      onlineUsers: 0
+      pollInterval: null,
+      lastUpdate: 0
     };
 
     // API helper
@@ -552,6 +502,7 @@ function getIndexHtml(): string {
 
     // Router
     function navigate(path) {
+      stopPolling(); // Stop polling when navigating away
       history.pushState(null, '', path);
       render();
     }
@@ -574,7 +525,7 @@ function getIndexHtml(): string {
         loadBoard(boardId).then(() => {
           app.innerHTML = renderBoard();
           setupBoardDragDrop();
-          connectWebSocket(boardId);
+          startPolling(boardId);
         });
       } else if (path === '/settings') {
         app.innerHTML = renderSettings();
@@ -816,7 +767,6 @@ function getIndexHtml(): string {
         <div class="header">
           <h1><a href="/" onclick="navigate('/');return false;">Kanban</a></h1>
           <div class="header-actions">
-            <div class="online-users"><span class="online-dot"></span> \${state.onlineUsers} online</div>
             <button onclick="showBoardSettings()">Settings</button>
             <div class="avatar" onclick="handleLogout()" title="Sign out">
               \${state.user.avatar_url ? '<img src="'+state.user.avatar_url+'">' : state.user.display_name.charAt(0).toUpperCase()}
@@ -919,7 +869,6 @@ function getIndexHtml(): string {
         closeModal();
         document.getElementById('app').innerHTML = renderBoard();
         setupBoardDragDrop();
-        broadcastUpdate({ type: 'list_created', payload: res.data.list });
       }
     }
 
@@ -931,7 +880,6 @@ function getIndexHtml(): string {
         state.currentBoard.cards = state.currentBoard.cards.filter(c => c.list_id !== listId);
         document.getElementById('app').innerHTML = renderBoard();
         setupBoardDragDrop();
-        broadcastUpdate({ type: 'list_deleted', payload: { id: listId } });
       }
     }
 
@@ -975,7 +923,6 @@ function getIndexHtml(): string {
         closeModal();
         document.getElementById('app').innerHTML = renderBoard();
         setupBoardDragDrop();
-        broadcastUpdate({ type: 'card_created', payload: res.data.card });
       }
     }
 
@@ -1012,7 +959,7 @@ function getIndexHtml(): string {
               <div class="card-detail-section">
                 <h4>Assignees</h4>
                 <div class="member-list">
-                  \${assignees.map(a => '<span class="member-badge"><span class="avatar" style="width:18px;height:18px">'+(a.display_name||a.username).charAt(0).toUpperCase()+'</span>'+escapeHtml(a.display_name||a.username)+'</span>').join('')}
+                  \${assignees.map(a => '<span class="member-badge"><span class="avatar" style="width:18px;height:18px">'+(a.avatar_url ? '<img src="'+a.avatar_url+'">' : (a.display_name||a.username).charAt(0).toUpperCase())+'</span>'+escapeHtml(a.display_name||a.username)+'</span>').join('')}
                   <button onclick="showAssigneePicker('\${card.id}')" style="font-size:0.75rem">+ Add</button>
                 </div>
               </div>
@@ -1051,7 +998,6 @@ function getIndexHtml(): string {
         const card = state.currentBoard.cards.find(c => c.id === cardId);
         if (card) card.description = desc;
         closeModal();
-        broadcastUpdate({ type: 'card_updated', payload: { id: cardId, description: desc } });
       }
     }
 
@@ -1066,7 +1012,6 @@ function getIndexHtml(): string {
         closeModal();
         document.getElementById('app').innerHTML = renderBoard();
         setupBoardDragDrop();
-        broadcastUpdate({ type: 'card_deleted', payload: { id: cardId } });
       }
     }
 
@@ -1093,7 +1038,6 @@ function getIndexHtml(): string {
         state.currentBoard.cardLabels = state.currentBoard.cardLabels.filter(cl => !(cl.card_id === cardId && cl.label_id === labelId));
       }
       showCardDetail(cardId);
-      broadcastUpdate({ type: 'card_label_changed', payload: { cardId, labelId, add } });
     }
 
     function showAssigneePicker(cardId) {
@@ -1102,7 +1046,7 @@ function getIndexHtml(): string {
         <div style="position:absolute;background:var(--bg-secondary);border:1px solid var(--border);border-radius:4px;padding:0.5rem;z-index:10;box-shadow:0 2px 8px rgba(0,0,0,0.1)">
           \${state.currentBoard.members.map(m => {
             const isAssigned = cardAssignees.some(ca => ca.user_id === m.user_id);
-            return '<div style="display:flex;align-items:center;gap:0.5rem;padding:0.25rem;cursor:pointer" onclick="toggleAssignee(\\''+cardId+'\\', \\''+m.user_id+'\\', '+!isAssigned+')"><span class="avatar" style="width:18px;height:18px">'+(m.display_name||m.username).charAt(0).toUpperCase()+'</span>'+escapeHtml(m.display_name||m.username)+(isAssigned?' [x]':'')+'</div>';
+            return '<div style="display:flex;align-items:center;gap:0.5rem;padding:0.25rem;cursor:pointer" onclick="toggleAssignee(\\''+cardId+'\\', \\''+m.user_id+'\\', '+!isAssigned+')"><span class="avatar" style="width:18px;height:18px">'+(m.avatar_url ? '<img src="'+m.avatar_url+'">' : (m.display_name||m.username).charAt(0).toUpperCase())+'</span>'+escapeHtml(m.display_name||m.username)+(isAssigned?' [x]':'')+'</div>';
           }).join('')}
         </div>
       \`;
@@ -1118,7 +1062,6 @@ function getIndexHtml(): string {
         state.currentBoard.cardAssignees = state.currentBoard.cardAssignees.filter(ca => !(ca.card_id === cardId && ca.user_id === userId));
       }
       showCardDetail(cardId);
-      broadcastUpdate({ type: 'card_assignee_changed', payload: { cardId, userId, add } });
     }
 
     async function addGithubLink(e, cardId) {
@@ -1184,7 +1127,6 @@ function getIndexHtml(): string {
             card.list_id = newListId;
             card.position = newPosition;
           }
-          broadcastUpdate({ type: 'card_moved', payload: { cardId, listId: newListId, position: newPosition } });
         });
       });
 
@@ -1220,7 +1162,6 @@ function getIndexHtml(): string {
             method: 'POST',
             body: { boardId: state.currentBoard.id, listIds }
           });
-          broadcastUpdate({ type: 'lists_reordered', payload: { listIds } });
         });
       }
     }
@@ -1249,75 +1190,64 @@ function getIndexHtml(): string {
       }, { offset: Number.NEGATIVE_INFINITY }).element;
     }
 
-    // WebSocket
-    function connectWebSocket(boardId) {
-      if (state.ws) state.ws.close();
-      clearTimeout(state.wsReconnectTimeout);
+    // Polling for sync (replaces WebSocket)
+    function startPolling(boardId) {
+      // Stop any existing polling
+      if (state.pollInterval) {
+        clearInterval(state.pollInterval);
+      }
 
-      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const ws = new WebSocket(protocol + '//' + location.host + '/api/ws/' + boardId + '?token=' + encodeURIComponent(document.cookie.match(/session=([^;]+)/)?.[1] || ''));
+      // Poll every 5 seconds
+      state.pollInterval = setInterval(async () => {
+        if (!location.pathname.startsWith('/board/')) {
+          clearInterval(state.pollInterval);
+          return;
+        }
 
-      ws.onopen = () => {
-        console.log('WebSocket connected');
-      };
-
-      ws.onmessage = (e) => {
         try {
-          const msg = JSON.parse(e.data);
-          handleWSMessage(msg);
-        } catch {}
-      };
+          const res = await api('/boards/' + boardId);
+          if (res.success) {
+            const newData = JSON.stringify({
+              lists: res.data.lists,
+              cards: res.data.cards,
+              labels: res.data.labels,
+              cardLabels: res.data.cardLabels,
+              cardAssignees: res.data.cardAssignees
+            });
 
-      ws.onclose = () => {
-        state.wsReconnectTimeout = setTimeout(() => {
-          if (location.pathname.startsWith('/board/')) {
-            connectWebSocket(boardId);
-          }
-        }, 3000);
-      };
+            const currentData = JSON.stringify({
+              lists: state.currentBoard.lists,
+              cards: state.currentBoard.cards,
+              labels: state.currentBoard.labels,
+              cardLabels: state.currentBoard.cardLabels,
+              cardAssignees: state.currentBoard.cardAssignees
+            });
 
-      state.ws = ws;
-    }
-
-    function handleWSMessage(msg) {
-      switch (msg.type) {
-        case 'user_joined':
-        case 'user_left':
-          state.onlineUsers = msg.payload.onlineCount || 0;
-          const onlineEl = document.querySelector('.online-users');
-          if (onlineEl) onlineEl.innerHTML = '<span class="online-dot"></span> ' + state.onlineUsers + ' online';
-          break;
-        case 'card_created':
-        case 'card_updated':
-        case 'card_deleted':
-        case 'card_moved':
-        case 'list_created':
-        case 'list_deleted':
-        case 'lists_reordered':
-        case 'card_label_changed':
-        case 'card_assignee_changed':
-        case 'list_updated':
-        case 'label_created':
-        case 'label_updated':
-        case 'label_deleted':
-        case 'board_updated':
-        case 'member_added':
-        case 'member_updated':
-        case 'member_removed':
-          // Reload board to sync changes
-          if (state.currentBoard) {
-            loadBoard(state.currentBoard.id).then(() => {
+            // Only re-render if data changed
+            if (newData !== currentData) {
+              state.currentBoard = {
+                ...state.currentBoard,
+                lists: res.data.lists,
+                cards: res.data.cards,
+                labels: res.data.labels,
+                cardLabels: res.data.cardLabels,
+                cardAssignees: res.data.cardAssignees,
+                githubLinks: res.data.githubLinks
+              };
               document.getElementById('app').innerHTML = renderBoard();
               setupBoardDragDrop();
-            });
+            }
           }
-          break;
-      }
+        } catch (e) {
+          console.error('Polling error:', e);
+        }
+      }, 5000);
     }
 
-    function broadcastUpdate(msg) {
-      if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-        state.ws.send(JSON.stringify(msg));
+    function stopPolling() {
+      if (state.pollInterval) {
+        clearInterval(state.pollInterval);
+        state.pollInterval = null;
       }
     }
 
@@ -1354,7 +1284,7 @@ function getIndexHtml(): string {
                 \${b.members.map(m => \`
                   <div class="member-row">
                     <div class="member-info">
-                      <div class="avatar">\${(m.display_name||m.username).charAt(0).toUpperCase()}</div>
+                      <div class="avatar">\${m.avatar_url ? '<img src="'+m.avatar_url+'">' : (m.display_name||m.username).charAt(0).toUpperCase()}</div>
                       <span>\${escapeHtml(m.display_name||m.username)}</span>
                       <span class="member-role">\${m.role}</span>
                     </div>

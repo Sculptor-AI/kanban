@@ -20,15 +20,6 @@ database_id = "95300b99-3279-4d54-b48a-f3e2c41e930e"
 binding = "STORAGE"
 bucket_name = "kanban-storage"
 
-# Durable Objects for real-time collaboration
-[[durable_objects.bindings]]
-name = "BOARD_ROOM"
-class_name = "BoardRoom"
-
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["BoardRoom"]
-
 # Environment variables (secrets set via wrangler secret)
 [vars]
 ENVIRONMENT = "production"

@@ -3,7 +3,6 @@
 export interface Env {
   DB: D1Database;
   STORAGE: R2Bucket;
-  BOARD_ROOM: DurableObjectNamespace;
   JWT_SECRET: string;
   INVITE_KEY_SALT: string;
   ENVIRONMENT: string;
