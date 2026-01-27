@@ -465,6 +465,60 @@ function getIndexHtml(): string {
     }
     .member-info { display: flex; align-items: center; gap: 0.5rem; }
     .member-role { font-size: 0.75rem; color: var(--text-secondary); }
+
+    /* Autocomplete */
+    .autocomplete-wrapper { position: relative; flex: 1; }
+    .autocomplete-results {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-top: none;
+      border-radius: 0 0 4px 4px;
+      max-height: 200px;
+      overflow-y: auto;
+      z-index: 20;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+    .autocomplete-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem;
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    .autocomplete-item:hover, .autocomplete-item.active {
+      background: var(--bg);
+    }
+    .autocomplete-item .avatar { width: 22px; height: 22px; }
+    .autocomplete-empty {
+      padding: 0.5rem;
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      text-align: center;
+    }
+
+    /* Screensaver */
+    #screensaver-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(245,245,245,0.85);
+      z-index: 9999;
+      opacity: 0;
+      transition: opacity 0.6s ease;
+      pointer-events: none;
+    }
+    #screensaver-overlay.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    #screensaver-canvas {
+      width: 100%;
+      height: 100%;
+    }
   </style>
 </head>
 <body>
@@ -479,7 +533,10 @@ function getIndexHtml(): string {
       currentBoard: null,
       currentCard: null,
       pollInterval: null,
-      lastUpdate: 0
+      lastUpdate: 0,
+      screensaverActive: false,
+      idleTimeout: null,
+      screensaverAnimFrame: null
     };
 
     // API helper
@@ -733,6 +790,11 @@ function getIndexHtml(): string {
       const container = document.getElementById('modal-container');
       if (container) container.innerHTML = '';
       state.currentCard = null;
+      // Re-render board to pick up any state changes that happened while dialog was open
+      if (state.currentBoard && location.pathname.startsWith('/board/')) {
+        document.getElementById('app').innerHTML = renderBoard();
+        setupBoardDragDrop();
+      }
     }
 
     // Board view
@@ -813,7 +875,7 @@ function getIndexHtml(): string {
           <div class="card-title">\${escapeHtml(card.title)}</div>
           \${githubLinks.length || assignees.length ? \`
             <div class="card-meta">
-              \${githubLinks.length ? '<span style="font-size:0.75rem;color:var(--text-secondary)">GH: \${githubLinks.length}</span>' : ''}
+              \${githubLinks.length ? '<span style="font-size:0.75rem;color:var(--text-secondary)">GH: ' + githubLinks.length + '</span>' : ''}
               \${assignees.length ? '<div class="card-assignees">' + assignees.slice(0,3).map(a => \`
                 <div class="avatar" title="\${escapeHtml(a.display_name || a.username)}">
                   \${a.avatar_url ? '<img src="'+a.avatar_url+'">' : (a.display_name || a.username).charAt(0).toUpperCase()}
@@ -1186,6 +1248,12 @@ function getIndexHtml(): string {
       }, { offset: Number.NEGATIVE_INFINITY }).element;
     }
 
+    // Check if any dialog/modal is currently open
+    function isModalOpen() {
+      const container = document.getElementById('modal-container');
+      return container && container.innerHTML.trim().length > 0;
+    }
+
     // Polling for sync (replaces WebSocket)
     function startPolling(boardId) {
       // Stop any existing polling
@@ -1193,10 +1261,10 @@ function getIndexHtml(): string {
         clearInterval(state.pollInterval);
       }
 
-      // Poll every 3 seconds (only when tab is visible)
+      // Poll every 2 seconds (only when tab is visible)
       state.pollInterval = setInterval(async () => {
-        // Skip polling if tab is hidden or not on a board page
-        if (document.hidden || !location.pathname.startsWith('/board/')) {
+        // Skip polling if tab is hidden, not on a board page, or screensaver is active
+        if (document.hidden || !location.pathname.startsWith('/board/') || state.screensaverActive) {
           if (!location.pathname.startsWith('/board/')) {
             clearInterval(state.pollInterval);
           }
@@ -1211,7 +1279,8 @@ function getIndexHtml(): string {
               cards: res.data.cards,
               labels: res.data.labels,
               cardLabels: res.data.cardLabels,
-              cardAssignees: res.data.cardAssignees
+              cardAssignees: res.data.cardAssignees,
+              githubLinks: res.data.githubLinks
             });
 
             const currentData = JSON.stringify({
@@ -1219,10 +1288,11 @@ function getIndexHtml(): string {
               cards: state.currentBoard.cards,
               labels: state.currentBoard.labels,
               cardLabels: state.currentBoard.cardLabels,
-              cardAssignees: state.currentBoard.cardAssignees
+              cardAssignees: state.currentBoard.cardAssignees,
+              githubLinks: state.currentBoard.githubLinks
             });
 
-            // Only re-render if data changed
+            // Only update if data changed
             if (newData !== currentData) {
               state.currentBoard = {
                 ...state.currentBoard,
@@ -1233,14 +1303,19 @@ function getIndexHtml(): string {
                 cardAssignees: res.data.cardAssignees,
                 githubLinks: res.data.githubLinks
               };
-              document.getElementById('app').innerHTML = renderBoard();
-              setupBoardDragDrop();
+
+              // If a modal/dialog is open, skip DOM re-render (state is updated,
+              // board will refresh when dialog closes)
+              if (!isModalOpen()) {
+                document.getElementById('app').innerHTML = renderBoard();
+                setupBoardDragDrop();
+              }
             }
           }
         } catch (e) {
           console.error('Polling error:', e);
         }
-      }, 3000);
+      }, 2000);
     }
 
     function stopPolling() {
@@ -1292,7 +1367,10 @@ function getIndexHtml(): string {
                 \`).join('')}
                 \${isAdmin ? \`
                   <form onsubmit="addMember(event)" style="margin-top:1rem;display:flex;gap:0.5rem">
-                    <input type="text" name="username" placeholder="Username" style="flex:1">
+                    <div class="autocomplete-wrapper">
+                      <input type="text" name="username" placeholder="Search users..." style="width:100%" autocomplete="off" oninput="handleMemberSearch(this)">
+                      <div id="member-autocomplete" class="autocomplete-results" style="display:none"></div>
+                    </div>
                     <button type="submit">Add</button>
                   </form>
                 \` : ''}
@@ -1499,6 +1577,219 @@ function getIndexHtml(): string {
       }
     }
 
+    // Member autocomplete
+    let memberSearchTimeout = null;
+    let memberSearchCache = {};
+
+    function handleMemberSearch(input) {
+      const query = input.value.trim();
+      const dropdown = document.getElementById('member-autocomplete');
+      if (!dropdown) return;
+
+      if (query.length < 1) {
+        dropdown.style.display = 'none';
+        return;
+      }
+
+      // Debounce: wait 200ms after last keystroke
+      clearTimeout(memberSearchTimeout);
+      memberSearchTimeout = setTimeout(async () => {
+        // Check cache first
+        if (memberSearchCache[query]) {
+          renderMemberResults(memberSearchCache[query], input, dropdown);
+          return;
+        }
+
+        try {
+          const res = await api('/users/search?q=' + encodeURIComponent(query));
+          if (res.success) {
+            const users = res.data.users;
+            memberSearchCache[query] = users;
+            // Only render if input still matches (user may have typed more)
+            if (input.value.trim() === query) {
+              renderMemberResults(users, input, dropdown);
+            }
+          }
+        } catch (e) {
+          console.error('Search error:', e);
+        }
+      }, 200);
+    }
+
+    function renderMemberResults(users, input, dropdown) {
+      // Filter out existing board members
+      const existingIds = new Set(state.currentBoard.members.map(m => m.user_id));
+      const filtered = users.filter(u => !existingIds.has(u.id));
+
+      if (filtered.length === 0 && input.value.trim().length > 0) {
+        dropdown.innerHTML = '<div class="autocomplete-empty">No users found</div>';
+        dropdown.style.display = 'block';
+        return;
+      }
+
+      dropdown.innerHTML = filtered.map(u => \`
+        <div class="autocomplete-item" onmousedown="selectMemberAutocomplete('\${escapeHtml(u.username)}', event)">
+          <div class="avatar">\${u.avatar_url ? '<img src="'+u.avatar_url+'">' : (u.display_name || u.username).charAt(0).toUpperCase()}</div>
+          <div>
+            <div style="font-weight:500">\${escapeHtml(u.display_name || u.username)}</div>
+            \${u.display_name ? '<div style="font-size:0.75rem;color:var(--text-secondary)">@'+escapeHtml(u.username)+'</div>' : ''}
+          </div>
+        </div>
+      \`).join('');
+      dropdown.style.display = filtered.length ? 'block' : 'none';
+    }
+
+    function selectMemberAutocomplete(username, e) {
+      e.preventDefault();
+      const form = e.target.closest('form');
+      const input = form.querySelector('input[name="username"]');
+      const dropdown = document.getElementById('member-autocomplete');
+      input.value = username;
+      if (dropdown) dropdown.style.display = 'none';
+      // Auto-submit the form
+      form.dispatchEvent(new Event('submit', { cancelable: true }));
+    }
+
+    // Hide autocomplete on blur (with delay for click to register)
+    document.addEventListener('click', (e) => {
+      const dropdown = document.getElementById('member-autocomplete');
+      if (dropdown && !e.target.closest('.autocomplete-wrapper')) {
+        dropdown.style.display = 'none';
+      }
+    });
+
+    // Screensaver - idle detection with particle animation
+    const IDLE_TIMEOUT = 60000; // 1 minute
+
+    function resetIdleTimer() {
+      // If screensaver is active, dismiss it
+      if (state.screensaverActive) {
+        dismissScreensaver();
+        return;
+      }
+      clearTimeout(state.idleTimeout);
+      state.idleTimeout = setTimeout(activateScreensaver, IDLE_TIMEOUT);
+    }
+
+    function activateScreensaver() {
+      if (state.screensaverActive) return;
+      state.screensaverActive = true;
+
+      // Create overlay
+      let overlay = document.getElementById('screensaver-overlay');
+      if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'screensaver-overlay';
+        overlay.innerHTML = '<canvas id="screensaver-canvas"></canvas>';
+        document.body.appendChild(overlay);
+      }
+
+      // Fade in
+      requestAnimationFrame(() => overlay.classList.add('active'));
+
+      // Setup canvas
+      const canvas = document.getElementById('screensaver-canvas');
+      const ctx = canvas.getContext('2d');
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+
+      // Particles
+      const particles = [];
+      const PARTICLE_COUNT = 80;
+      for (let i = 0; i < PARTICLE_COUNT; i++) {
+        particles.push({
+          x: Math.random() * canvas.width,
+          y: Math.random() * canvas.height,
+          vx: (Math.random() - 0.5) * 0.8,
+          vy: (Math.random() - 0.5) * 0.8,
+          radius: Math.random() * 2 + 1,
+          opacity: Math.random() * 0.5 + 0.2
+        });
+      }
+
+      function animate() {
+        if (!state.screensaverActive) return;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Update and draw particles
+        particles.forEach(p => {
+          p.x += p.vx;
+          p.y += p.vy;
+
+          // Wrap around edges
+          if (p.x < 0) p.x = canvas.width;
+          if (p.x > canvas.width) p.x = 0;
+          if (p.y < 0) p.y = canvas.height;
+          if (p.y > canvas.height) p.y = 0;
+
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(100, 100, 100, ' + p.opacity + ')';
+          ctx.fill();
+        });
+
+        // Draw connections between nearby particles
+        for (let i = 0; i < particles.length; i++) {
+          for (let j = i + 1; j < particles.length; j++) {
+            const dx = particles[i].x - particles[j].x;
+            const dy = particles[i].y - particles[j].y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < 150) {
+              ctx.beginPath();
+              ctx.moveTo(particles[i].x, particles[i].y);
+              ctx.lineTo(particles[j].x, particles[j].y);
+              ctx.strokeStyle = 'rgba(160, 160, 160, ' + (0.15 * (1 - dist / 150)) + ')';
+              ctx.lineWidth = 0.5;
+              ctx.stroke();
+            }
+          }
+        }
+
+        state.screensaverAnimFrame = requestAnimationFrame(animate);
+      }
+
+      animate();
+    }
+
+    function dismissScreensaver() {
+      if (!state.screensaverActive) return;
+      state.screensaverActive = false;
+
+      // Cancel animation
+      if (state.screensaverAnimFrame) {
+        cancelAnimationFrame(state.screensaverAnimFrame);
+        state.screensaverAnimFrame = null;
+      }
+
+      // Fade out
+      const overlay = document.getElementById('screensaver-overlay');
+      if (overlay) {
+        overlay.classList.remove('active');
+        // Remove after transition
+        setTimeout(() => {
+          if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        }, 600);
+      }
+
+      // Restart idle timer
+      clearTimeout(state.idleTimeout);
+      state.idleTimeout = setTimeout(activateScreensaver, IDLE_TIMEOUT);
+    }
+
+    // Listen for any user activity
+    ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll'].forEach(evt => {
+      document.addEventListener(evt, resetIdleTimer, { passive: true });
+    });
+
+    // Handle resize for screensaver canvas
+    window.addEventListener('resize', () => {
+      const canvas = document.getElementById('screensaver-canvas');
+      if (canvas && state.screensaverActive) {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+      }
+    });
+
     // Utilities
     function escapeHtml(str) {
       if (!str) return '';
@@ -1512,6 +1803,8 @@ function getIndexHtml(): string {
         state.user = res.data.user;
       }
       render();
+      // Start idle timer
+      resetIdleTimer();
     }
 
     init();
